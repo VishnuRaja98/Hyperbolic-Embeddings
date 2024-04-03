@@ -85,10 +85,10 @@ class InputData:
     def get_sentence_embeddings(self, model):
         """Creates sentence embeddings and create final input matrix of embeddings of sentences of each tree
         Final main output = eucledian_embeddings = [[sentenceEmbedding1,..,sentenceEmbeddingN] for each distinct tree]"""
-        self.eucledian_embeddings_all = model.encode(self.unique_sentences_list)
+        self.eucledian_embeddings_all = torch.tensor(model.encode(self.unique_sentences_list))
         if VERBOSE: 
             print("embeddings shape = ",self.eucledian_embeddings_all.shape)
-            print("First sentence tokenized = ",self.eucledian_embeddings_all[0])
+            # print("First sentence tokenized = ",self.eucledian_embeddings_all[0])
         # create an dict trees in the format {parent:[children]}
         # create an array of tree edges of the format [[parent,children]] like in the .edges files in ParseTreeEmbeddings.ipynb
         G = nx.Graph()
@@ -126,7 +126,7 @@ class InputData:
         self.trees = [[] for _ in range(len(self.connected_components))]
         for edge in self.trees_list:
             self.trees[self.belongs_to_tree[edge[0]]].append(edge)
-        self.euclidean_embeddings = [torch.tensor([self.eucledian_embeddings_all[i] for i in component]) for component in self.connected_components]
+        self.euclidean_embeddings = [torch.stack([self.eucledian_embeddings_all[i] for i in component]) for component in self.connected_components]
         # this final eucledian embeddings consists of list of list of eucledian embeddingd of each sentence of each tree
         if VERBOSE:
             # print("trees list = ", self.trees_list)
@@ -175,6 +175,24 @@ class InputData:
         # Save the graph as a PDF or PNG
         dot.render('tree_cosine_with_unrealted_connection', format='pdf', cleanup=True)
 
+
+# Define a neural network
+class EucToHypNN(nn.Module):
+    def __init__(self, input_size, output_size):
+        super(EucToHypNN, self).__init__()
+        self.fc1 = nn.Linear(input_size, 2*input_size)
+        self.relu = nn.ReLU()
+        self.fc2 = nn.Linear(2*input_size, output_size)
+        self.softmax_out = nn.Softmax()
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = self.relu(x)
+        x = self.fc2(x)
+        x = self.softmax_out(x)
+        return x
+# another option is to directly finetune the sentence embeding model with hyperbolic loss functions
+    
 def main(): 
     global VERBOSE
     VERBOSE = True
@@ -194,20 +212,27 @@ def main():
 
 
     input_size = 384
-    output_size = 10
-    mapping = nn.Sequential(
-            nn.Linear(input_size, 50).to(device),
+    output_size = 50
+
+    converterModel = EucToHypNN(input_size, output_size)
+    """mapping = nn.Sequential(
+            nn.Linear(input_size, 384).to(device),
             nn.ReLU().to(device),
-            nn.Linear(50, output_size).to(device),
-            nn.ReLU().to(device))
+            nn.Linear(384, output_size).to(device),
+            nn.ReLU().to(device)
+            )"""
+    
     # print("trees list = ", trees_list)
     # print("Connected components = ", connected_components)
     # print("Unique connected components = ", len(connected_components))
     # print("All trees = ", trees)
     # print("total trees = ", len(trees ))
-    trainer.trainFCIters(data, mapping)
+    
+    # trainer.trainFCIters(data, mapping)
+    trainer.trainFCIters2(data, converterModel)
 
-    new_embeddings = mapping(torch.tensor(data.eucledian_embeddings_all))
+    # new_embeddings = mapping(torch.tensor(data.eucledian_embeddings_all))
+    new_embeddings = converterModel(torch.tensor(data.eucledian_embeddings_all))
     print("New embeddings = ",new_embeddings)
 
 
