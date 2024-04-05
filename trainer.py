@@ -39,7 +39,7 @@ def euclidean_grad(p, d_p):
 def retraction(p, d_p, lr):
     # Gradient clipping.
     if torch.all(d_p < 1000) and torch.all(d_p>-1000):
-        p.data.add_(-lr, d_p)
+        p.data.add_(d_p, alpha = -lr)
 
 
 class RiemannianSGD(Optimizer):
@@ -120,7 +120,7 @@ def distortion_row(H1, H2, n, row):
     return (avg, good)
 
 def distortion(H1, H2, n, jobs=16):
-#     dists = Parallel(n_jobs=jobs)(delayed(distortion_row)(H1[i,:],H2[i,:],n,i) for i in range(n))
+    # dists = Parallel(n_jobs=jobs)(delayed(distortion_row)(H1[i,:],H2[i,:],n,i) for i in range(n))
     dists = (distortion_row(H1[i,:],H2[i,:],n,i) for i in range(n))
     to_stack = [tup[0] for tup in dists]
     avg = torch.stack(to_stack).sum()/n
@@ -224,7 +224,7 @@ def trainFCHyp(input_matrix, ground_truth, n, mapping, mapping_optimizer, max_le
 
 
 
-def trainFCIters2(data, mapping, n_epochs=5, print_every=50, plot_every=100, learning_rate=0.01):
+def trainFCIters2(data, mapping, n_epochs=5, print_every=50, plot_every=100, learning_rate=1e-4):
     start = time.time()
     plot_losses = []
     print_loss_total = 0
@@ -234,7 +234,7 @@ def trainFCIters2(data, mapping, n_epochs=5, print_every=50, plot_every=100, lea
     for epoch in range(n_epochs):
         print("Starting epoch "+str(epoch))
         # Forward pass
-        output = mapping(data.eucledian_embeddings_all)
+        output = mapping(data.unique_sentences_list)
         # loss = mapping_optimizer(output, target)
         # data.euclidean_embeddings has an list of embeddings of sentences in tree
         # training_pairs has the distance matrix for each tree
@@ -243,7 +243,7 @@ def trainFCIters2(data, mapping, n_epochs=5, print_every=50, plot_every=100, lea
         for i in range(len(training_pairs)):
             dist_recovered = distance_matrix_hyperbolic(output[list(data.connected_components[i])])
             loss += distortion(training_pairs[i][1], dist_recovered, training_pairs[i][2])
-        print("loss = ", loss)
+        print(f"Epoch: {epoch} loss = {loss} time = {time.time()-start}")
         
         # Backward pass
         mapping.zero_grad()

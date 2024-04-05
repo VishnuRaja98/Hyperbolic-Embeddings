@@ -177,9 +177,10 @@ class InputData:
 
 
 # Define a neural network
-class EucToHypNN(nn.Module):
+class EucToHypNN_old(nn.Module):
     def __init__(self, input_size, output_size):
         super(EucToHypNN, self).__init__()
+        self.l1 = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
         self.fc1 = nn.Linear(input_size, 2*input_size)
         self.relu = nn.ReLU()
         self.fc2 = nn.Linear(2*input_size, output_size)
@@ -190,6 +191,28 @@ class EucToHypNN(nn.Module):
         x = self.relu(x)
         x = self.fc2(x)
         x = self.softmax_out(x)
+        return x
+    
+class EucToHypNN(nn.Module):
+    def __init__(self, output_size, freeze_l1=False):
+        super(EucToHypNN, self).__init__()
+        self.l1 = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+
+        if freeze_l1:
+            for param in self.l1.parameters():
+                param.requires_grad = False
+
+        self.fc1 = nn.Linear(self.l1.get_sentence_embedding_dimension(), 2*self.l1.get_sentence_embedding_dimension())
+        self.relu = nn.ReLU()
+        self.fc2 = nn.Linear(2*self.l1.get_sentence_embedding_dimension(), output_size)
+        # self.softmax_out = nn.Softmax(dim=1)
+
+    def forward(self, x):
+        x = torch.tensor(self.l1.encode(x))
+        x = self.fc1(x)
+        x = self.relu(x)
+        x = self.fc2(x)
+        # x = self.softmax_out(x)
         return x
 # another option is to directly finetune the sentence embeding model with hyperbolic loss functions
     
@@ -209,12 +232,11 @@ def main():
     model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
     data.get_sentence_embeddings(model)
 
-
-
-    input_size = 384
     output_size = 50
 
-    converterModel = EucToHypNN(input_size, output_size)
+    converterModel = EucToHypNN(output_size)
+    converterModel.to(device)
+
     """mapping = nn.Sequential(
             nn.Linear(input_size, 384).to(device),
             nn.ReLU().to(device),
