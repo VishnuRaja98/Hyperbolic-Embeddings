@@ -3,6 +3,8 @@ import math
 import time
 import networkx as nx
 import numpy as np
+from torch.optim.lr_scheduler import StepLR
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 #Riemannian SGD
@@ -72,8 +74,55 @@ class RiemannianSGD(Optimizer):
                 d_p = p.grad.data
                 if lr is None:
                     lr = group['lr']
-                d_p = group['rgrad'](p, d_p)
-                group['retraction'](p, d_p, lr)
+                d_p = group['rgrad'](p, d_p)    # calculates poincare gradient
+                group['retraction'](p, d_p, lr) # gradient clipping
+
+        return loss
+    
+class RiemannianAdam(Optimizer):
+    def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8, rgrad=required, retraction=required):
+        
+        if not 0.0 <= lr:   # Check validity of input parameters
+            raise ValueError("Invalid learning rate: {}".format(lr))
+        if not 0.0 <= eps:
+            raise ValueError("Invalid epsilon value: {}".format(eps))
+        if not 0.0 <= betas[0] < 1.0:
+            raise ValueError("Invalid beta parameter at index 0: {}".format(betas[0]))
+        if not 0.0 <= betas[1] < 1.0:
+            raise ValueError("Invalid beta parameter at index 1: {}".format(betas[1]))
+
+        defaults = dict(lr=lr, betas=betas, eps=eps, rgrad=rgrad, retraction=retraction)    # Store default values for parameters
+        super(RiemannianAdam, self).__init__(params, defaults)  # Call superclass constructor with parameters and defaults
+
+    def step(self, closure=None):
+        loss = None
+        if closure is not None:
+            loss = closure()    # If a closure function is provided, compute the loss
+
+        for group in self.param_groups: # Iterate over parameter groups
+            for p in group['params']:   # Iterate over parameters in group
+                if p.grad is None:
+                    continue
+                grad = group['rgrad'](p, p.grad.data)   # calculates Riemannian gradient - passed function is poincare gradient
+                state = self.state[p]       # optimizer state for parameter
+                if len(state) == 0:         # setting optimizer state as 0s if state does not exist
+                    state['step'] = 0       # used for counting number of states for changing lr
+                    state['exp_avg'] = torch.zeros_like(p.data)
+                    state['exp_avg_sq'] = torch.zeros_like(p.data)
+
+                exp_avg, exp_avg_sq = state['exp_avg'], state['exp_avg_sq']
+                beta1, beta2 = group['betas']
+
+                state['step'] += 1
+
+                exp_avg.mul_(beta1).add_(grad, alpha=1-beta1)
+                exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1-beta2)
+
+                denom = exp_avg_sq.sqrt().add_(group['eps'])
+
+                step_size = group['lr'] * math.sqrt(1 - beta2 ** state['step']) / (1 - beta1 ** state['step'])
+                
+                p.data.addcdiv_(exp_avg, denom, value=-step_size)
 
         return loss
     
@@ -224,7 +273,7 @@ def trainFCHyp(input_matrix, ground_truth, n, mapping, mapping_optimizer, max_le
 
 
 
-def trainFCIters2(data, mapping, n_epochs=5, print_every=50, plot_every=100, learning_rate=1e-4):
+def trainFCIters2_old(data, mapping, n_epochs=5, print_every=50, plot_every=100, learning_rate=1e-4):
     start = time.time()
     plot_losses = []
     print_loss_total = 0
@@ -253,3 +302,42 @@ def trainFCIters2(data, mapping, n_epochs=5, print_every=50, plot_every=100, lea
         mapping_optimizer.step()
 
         print(f"Epoch {epoch+1}, Loss: {loss.item()}")
+
+def trainFCIters2(data, mapping, n_epochs=85, print_every=50, plot_every=100, learning_rate=1e-4):
+    start = time.time()
+    plot_losses = []
+    print_loss_total = 0
+    plot_loss_total = 0
+    mapping_optimizer = RiemannianAdam(mapping.parameters(), lr=learning_rate, rgrad=poincare_grad, retraction=retraction)
+    scheduler = StepLR(mapping_optimizer, step_size=15, gamma=0.5)
+    training_pairs = [pairfromidx(data, idx) for idx in range(len(data.connected_components))]
+    for epoch in range(n_epochs):
+        print("Starting epoch "+str(epoch))
+        # Forward pass
+        output = mapping(data.unique_sentences_list)
+        
+        loss=0
+        D=[]
+        for i in range(len(training_pairs)):
+            dist_recovered = distance_matrix_hyperbolic(output[list(data.connected_components[i])])
+            D.append(distortion(training_pairs[i][1], dist_recovered, training_pairs[i][2]))
+        #loss=sum(D)/len(D)
+        loss=sum(D)
+        print(f"Epoch: {epoch} loss = {loss} time = {time.time()-start}")
+        
+        # Backward pass
+        mapping.zero_grad()
+        torch.nn.utils.clip_grad_norm_(mapping.parameters(), 10.0)
+        loss.backward()
+        
+        total_grad_norm = torch.nn.utils.clip_grad_norm_(mapping.parameters(), float('inf'), norm_type=2.0)
+        print(f"Total gradient norm is {total_grad_norm}")
+
+        # Update weights
+        mapping_optimizer.step()
+
+        print(f"Epoch {epoch+1}, Loss: {loss.item()}")
+
+        scheduler.step()
+        
+        print("Current learning rate:", scheduler.get_last_lr())
