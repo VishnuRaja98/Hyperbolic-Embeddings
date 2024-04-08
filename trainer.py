@@ -196,7 +196,7 @@ def get_dist_mat(G,node_to_ids):
 
     for i, (node, lengths_to_node) in enumerate(lengths.items()):
         for target_node, length in lengths_to_node.items():
-            dist_mat[node_to_ids[node], node_to_ids[target_node]] = length
+            dist_mat[node_to_ids[node], node_to_ids[target_node]] = 1 if length>=1 else 0
 
     return dist_mat
 
