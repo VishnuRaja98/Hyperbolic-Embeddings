@@ -273,37 +273,37 @@ def trainFCHyp(input_matrix, ground_truth, n, mapping, mapping_optimizer, max_le
 
 
 
-def trainFCIters2_old(data, mapping, n_epochs=5, print_every=50, plot_every=100, learning_rate=1e-4):
-    start = time.time()
-    plot_losses = []
-    print_loss_total = 0
-    plot_loss_total = 0
-    mapping_optimizer = RiemannianSGD(mapping.parameters(), lr=learning_rate, rgrad=poincare_grad, retraction=retraction)
-    training_pairs = [pairfromidx(data, idx) for idx in range(len(data.connected_components))]
-    for epoch in range(n_epochs):
-        print("Starting epoch "+str(epoch))
-        # Forward pass
-        output = mapping(data.unique_sentences_list)
-        # loss = mapping_optimizer(output, target)
-        # data.euclidean_embeddings has an list of embeddings of sentences in tree
-        # training_pairs has the distance matrix for each tree
-        # Loss is summed up for all trees
-        loss=0
-        for i in range(len(training_pairs)):
-            dist_recovered = distance_matrix_hyperbolic(output[list(data.connected_components[i])])
-            loss += distortion(training_pairs[i][1], dist_recovered, training_pairs[i][2])
-        print(f"Epoch: {epoch} loss = {loss} time = {time.time()-start}")
+# def trainFCIters2_old(data, mapping, n_epochs=5, print_every=50, plot_every=100, learning_rate=1e-4):
+#     start = time.time()
+#     plot_losses = []
+#     print_loss_total = 0
+#     plot_loss_total = 0
+#     mapping_optimizer = RiemannianSGD(mapping.parameters(), lr=learning_rate, rgrad=poincare_grad, retraction=retraction)
+#     training_pairs = [pairfromidx(data, idx) for idx in range(len(data.connected_components))]
+#     for epoch in range(n_epochs):
+#         print("Starting epoch "+str(epoch))
+#         # Forward pass
+#         output = mapping(data.unique_sentences_list)
+#         # loss = mapping_optimizer(output, target)
+#         # data.euclidean_embeddings has an list of embeddings of sentences in tree
+#         # training_pairs has the distance matrix for each tree
+#         # Loss is summed up for all trees
+#         loss=0
+#         for i in range(len(training_pairs)):
+#             dist_recovered = distance_matrix_hyperbolic(output[list(data.connected_components[i])])
+#             loss += distortion(training_pairs[i][1], dist_recovered, training_pairs[i][2])
+#         print(f"Epoch: {epoch} loss = {loss} time = {time.time()-start}")
         
-        # Backward pass
-        mapping.zero_grad()
-        loss.backward()
+#         # Backward pass
+#         mapping.zero_grad()
+#         loss.backward()
 
-        # Update weights
-        mapping_optimizer.step()
+#         # Update weights
+#         mapping_optimizer.step()
 
-        print(f"Epoch {epoch+1}, Loss: {loss.item()}")
+#         print(f"Epoch {epoch+1}, Loss: {loss.item()}")
 
-def trainFCIters2(data, mapping, n_epochs=85, print_every=50, plot_every=100, learning_rate=1e-4):
+def trainFCIters2(data, mapping, n_epochs=5, print_every=50, plot_every=100, learning_rate=1e-4):
     start = time.time()
     plot_losses = []
     print_loss_total = 0
@@ -323,7 +323,6 @@ def trainFCIters2(data, mapping, n_epochs=85, print_every=50, plot_every=100, le
             D.append(distortion(training_pairs[i][1], dist_recovered, training_pairs[i][2]))
         #loss=sum(D)/len(D)
         loss=sum(D)
-        print(f"Epoch: {epoch} loss = {loss} time = {time.time()-start}")
         
         # Backward pass
         mapping.zero_grad()
@@ -336,8 +335,10 @@ def trainFCIters2(data, mapping, n_epochs=85, print_every=50, plot_every=100, le
         # Update weights
         mapping_optimizer.step()
 
-        print(f"Epoch {epoch+1}, Loss: {loss.item()}")
+        print(f"Epoch {epoch+1}, Loss: {loss.item()}  time = {time.time()-start}")
+        plot_losses.append(loss.item())
 
         scheduler.step()
         
         print("Current learning rate:", scheduler.get_last_lr())
+    return plot_losses

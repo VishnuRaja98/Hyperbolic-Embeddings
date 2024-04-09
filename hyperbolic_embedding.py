@@ -10,6 +10,7 @@ import torch.nn as nn
 # import torch.optim as optim
 # from __future__ import unicode_literals, print_function, division
 from io import open
+import matplotlib.pyplot as plt
 # import unicodedata
 # import string
 # import re
@@ -35,6 +36,18 @@ def read_lines(path):
             lines.append(row)
     if VERBOSE: print(f"Total relations = {len(lines)}")
     return lines
+
+def plot_losses(losses):
+    """
+    Plots losses over iterations.
+    losses (list): List of loss values over iterations.
+    """
+    plt.plot(losses, label='Loss')
+    plt.title('Loss over Iterations')
+    plt.xlabel('Iteration')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.savefig("train_losses.png")
 
 def find_reachable_nodes(graph, start_node):
     """finds all super children for parents"""
@@ -166,7 +179,7 @@ class InputData:
         # for edge in G.edges(data=True):            
         #     print(edge)
         
-        # maybe can include this function from trainer here itself if more efficient!
+        # # maybe can include this function from trainer here itself if more efficient!
         # lengths = dict(nx.all_pairs_dijkstra_path_length(G))
         # # print("lengths = ", lengths)
         # n = nx.number_of_nodes(G)
@@ -203,7 +216,9 @@ class InputData:
             # print("trees = ", self.trees)
             print(f"euclidean_embeddings[0].shape={self.euclidean_embeddings[0].shape}")
 
-    def draw_trees(self):
+    def draw_trees(self, figname, sentence_embeddings = None):
+        if sentence_embeddings is None:
+            sentence_embeddings = self.eucledian_embeddings_all
         # Create a sample tree structure
         tree_structure = self.trees_dict
 
@@ -215,9 +230,9 @@ class InputData:
             dot.node('"{}"'.format(self.unique_sentences_list[parent]))
             for child in children:
                 dot.edge('"{}"'.format(self.unique_sentences_list[parent]), '"{}"'.format(self.unique_sentences_list[child]), \
-                        label = str(cosine_similarity([self.eucledian_embeddings_all[parent]], [self.eucledian_embeddings_all[child]])))
+                        label = str(cosine_similarity([sentence_embeddings[parent]], [sentence_embeddings[child]])))
                 
-        dot.render('tree_cosine', format='pdf', cleanup=True)
+        dot.render(figname, format='pdf', cleanup=True)
 
         # # Adding connections to next unconnected tree to show the bert encoding similarities between some unrealted texts
         # for i in range(len(self.connected_components)-1):
@@ -299,7 +314,7 @@ def main():
     model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
     data.get_sentence_embeddings(model)
 
-    data.draw_trees()   # optional
+    data.draw_trees(figname = "tree_cosine")   # optional
 
     output_size = 50
 
@@ -320,11 +335,21 @@ def main():
     # print("total trees = ", len(trees ))
     
     # trainer.trainFCIters(data, mapping)
-    trainer.trainFCIters2(data, converterModel)
+    train_losses = trainer.trainFCIters2(data, converterModel, n_epochs=85)
 
+    plot_losses(train_losses)
+
+    # print("data.eucledian_embeddings_all = ", data.eucledian_embeddings_all)
     # new_embeddings = mapping(torch.tensor(data.eucledian_embeddings_all))
-    new_embeddings = converterModel(torch.tensor(data.eucledian_embeddings_all))
-    print("New embeddings = ",new_embeddings)
+    new_embeddings = converterModel(data.unique_sentences_list)
+
+    # print("old = ",data.eucledian_embeddings_all[0])
+    # print("new = ",new_embeddings[0])
+
+    torch.save(new_embeddings, 'new_embeddings.pt')
+
+    data.draw_trees(figname = "tree_hyp_cosine", sentence_embeddings=new_embeddings.detach())   # optional
+
 
 
 if __name__=="__main__": 
