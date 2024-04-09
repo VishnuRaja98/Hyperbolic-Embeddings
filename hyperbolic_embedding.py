@@ -1,5 +1,5 @@
 # import os
-# import numpy as np
+import numpy as np
 # import scipy.sparse.csgraph as csg
 # from joblib import Parallel, delayed
 # import multiprocessing
@@ -36,17 +36,64 @@ def read_lines(path):
     if VERBOSE: print(f"Total relations = {len(lines)}")
     return lines
 
+def find_reachable_nodes(graph, start_node):
+    """finds all super children for parents"""
+    # Use breadth-first search to find reachable nodes
+    reachable_nodes = set(nx.descendants(graph, start_node))
+    
+    # Include the start node itself
+    reachable_nodes.add(start_node)
+    
+    return reachable_nodes
+
+def add_edges_to_reachable_nodes(graph):
+    """Adds a edge of weight 1 from a parent to its every super child"""
+    # Create a new graph to store the result
+    graph_with_edges = graph.copy()
+    
+    # Iterate through each node in the graph
+    for node in graph.nodes():
+        # Find reachable nodes from the current node
+        reachable_nodes = find_reachable_nodes(graph, node)
+        
+        # Add edges from the current node to its reachable nodes
+        for reachable_node in reachable_nodes:
+            if node != reachable_node:  # Avoid self-loops
+                graph_with_edges.add_edge(node, reachable_node)
+    
+    return graph_with_edges
+
+def add_connections_with_common_parent(graph):
+    """This created a connection of weight 2 if two nodes were on seperate brancehes of a common parent"""
+    # Create a new graph to store the result
+    graph_with_connections = graph.copy()
+    
+    # Iterate through each parent node in the graph
+    for parent in graph.nodes():
+        # Find children of the current parent
+        children = list(graph.successors(parent))
+        num_children = len(children)
+        
+        # Add connections with weight 2 between pairs of children
+        for i in range(num_children):
+            for j in range(num_children):
+                child1 = children[i]
+                child2 = children[j]
+                # Check if there is no path between child1 and child2
+                if not nx.has_path(graph, child1, child2) and not nx.has_path(graph, child2, child1):
+                    graph_with_connections.add_edge(child1, child2, weight=2)
+    
+    return graph_with_connections
+
 class InputData:
     """stores all mapping, embedding data"""
-    def __init__(self, lines, neg_lines) -> None:
+    def __init__(self, lines) -> None:
         self.lines = lines
-        self.neg_lines = neg_lines
         self.sentence_ids = {}
         self.unique_sentences_list = []
         self.eucledian_embeddings_all = []
 
         self.trees_dict = {}     # create an dict trees in the format {parent:[children]}
-        self.neg_trees_dict = {}
         self.trees_list = []     # create an array of tree edges of the format [[parent,children]] like in the .edges files in ParseTreeEmbeddings.ipynb
         self.connected_components = []
         self.belongs_to_tree = {}
@@ -68,13 +115,6 @@ class InputData:
                 self.sentence_ids[line[1]]=i
                 i=i+1
         
-        for line in self.neg_lines:
-            if line[0] not in self.sentence_ids:
-                self.sentence_ids[line[0]]=i
-                i=i+1
-            if line[1] not in self.sentence_ids:
-                self.sentence_ids[line[1]]=i
-                i=i+1
 
         # if VERBOSE: print("Unique Sentences = ", self.sentence_ids)
         self.unique_sentences_list = ["" for _ in range(len(self.sentence_ids))]
@@ -92,29 +132,54 @@ class InputData:
         # create an dict trees in the format {parent:[children]}
         # create an array of tree edges of the format [[parent,children]] like in the .edges files in ParseTreeEmbeddings.ipynb
         G = nx.Graph()
+        G_directed = nx.DiGraph()   # First creating a directed graph to control the parent child relation ship
+        # later once functions are completed, well convert to undirected if required
         for line in self.lines:
             parent_id = self.sentence_ids[line[0]]
             child_id = self.sentence_ids[line[1]]
             self.trees_list.append([parent_id,child_id])
+            
+        # print("trees_list", self.trees_list)
+        G_directed.add_edges_from(self.trees_list)
+
+        # Add edges from every node to each of its reachable nodes
+        graph_with_edges = add_edges_to_reachable_nodes(G_directed)
+        
+        # this below for loop is only used for creating datastructure for the pdf
+        for edge in graph_with_edges.edges(data=True):
+            # using this directed graph for drawing as the directed one wasnt very clear.
+            parent_id = edge[0]
+            child_id = edge[1]
             if parent_id in self.trees_dict:
                 if child_id not in self.trees_dict[parent_id]:
                     self.trees_dict[parent_id].append(child_id)
             else:
                 self.trees_dict[parent_id]=[child_id]
 
-        # not adding the negative lines into tree edges cause dont know what to do with negative realtions right now
-        # im just generating the negative trees, dont know if theyre useful
-        for line in self.neg_lines:
-            parent_id = self.sentence_ids[line[0]]
-            child_id = self.sentence_ids[line[1]]
-            if parent_id in self.neg_trees_dict:
-                if child_id not in self.neg_trees_dict[parent_id]:
-                    self.neg_trees_dict[parent_id].append(child_id)
-            else:
-                self.neg_trees_dict[parent_id]=[child_id]
+        # # Add connections with weight 2 between nodes that have a common parent
+        # graph_with_connections = add_connections_with_common_parent(graph_with_edges)
+        
+        # converting to undirected to be able to calclate distances using djikstra later
+        G = graph_with_edges.to_undirected()  
+        
+        # print("Edges in the graph:")
+        # for edge in G.edges(data=True):            
+        #     print(edge)
+        
+        # maybe can include this function from trainer here itself if more efficient!
+        # lengths = dict(nx.all_pairs_dijkstra_path_length(G))
+        # # print("lengths = ", lengths)
+        # n = nx.number_of_nodes(G)
+        # dist_mat = np.full((n, n), np.inf)
+
+        # for i, (node, lengths_to_node) in enumerate(lengths.items()):
+        #     for target_node, length in lengths_to_node.items():
+        #         dist_mat[node,target_node] = length
+
+        # print(dist_mat)
+
 
         # finding connected components using trees_list
-        G.add_edges_from(self.trees_list)
         self.connected_components = list(nx.connected_components(G))
 
         self.indices = [i for i in range(len(self.connected_components))]   # index for each Connected Component
@@ -154,26 +219,26 @@ class InputData:
                 
         dot.render('tree_cosine', format='pdf', cleanup=True)
 
-        # Adding connections to next unconnected tree to show the bert encoding similarities between some unrealted texts
-        for i in range(len(self.connected_components)-1):
-            first_tree_node = None
-            for component in self.connected_components[i]:
-                if component not in self.trees_dict:
-                    first_tree_node = component
-                    break
-            second_tree_node = None
-            for component in self.connected_components[i+1]:
-                if component not in self.trees_dict:
-                    second_tree_node = component
-                    break
+        # # Adding connections to next unconnected tree to show the bert encoding similarities between some unrealted texts
+        # for i in range(len(self.connected_components)-1):
+        #     first_tree_node = None
+        #     for component in self.connected_components[i]:
+        #         if component not in self.trees_dict:
+        #             first_tree_node = component
+        #             break
+        #     second_tree_node = None
+        #     for component in self.connected_components[i+1]:
+        #         if component not in self.trees_dict:
+        #             second_tree_node = component
+        #             break
 
-            dot.node('"{}"'.format(self.unique_sentences_list[first_tree_node]))
-            dot.edge('"{}"'.format(self.unique_sentences_list[first_tree_node]), '"{}"'.format(self.unique_sentences_list[second_tree_node]), \
-                        label = str(cosine_similarity([self.eucledian_embeddings_all[first_tree_node]], [self.eucledian_embeddings_all[second_tree_node]])), \
-                        color="red")
+        #     dot.node('"{}"'.format(self.unique_sentences_list[first_tree_node]))
+        #     dot.edge('"{}"'.format(self.unique_sentences_list[first_tree_node]), '"{}"'.format(self.unique_sentences_list[second_tree_node]), \
+        #                 label = str(cosine_similarity([self.eucledian_embeddings_all[first_tree_node]], [self.eucledian_embeddings_all[second_tree_node]])), \
+        #                 color="red")
 
-        # Save the graph as a PDF or PNG
-        dot.render('tree_cosine_with_unrealted_connection', format='pdf', cleanup=True)
+        # # Save the graph as a PDF or PNG
+        # dot.render('tree_cosine_with_unrealted_connection', format='pdf', cleanup=True)
 
 
 # Define a neural network
@@ -209,6 +274,8 @@ class EucToHypNN(nn.Module):
 
     def forward(self, x):
         x = torch.tensor(self.l1.encode(x))
+        # Normalize the embeddings -> didnt make a diff
+        # x = torch.nn.functional.normalize(x, p=2, dim=-1)
         x = self.fc1(x)
         x = self.relu(x)
         x = self.fc2(x)
@@ -221,16 +288,18 @@ def main():
     VERBOSE = True
 
     file_path_pos = 'pos_headline_pairs.tsv'
-    file_path_neg = 'neg_headline_pairs.tsv'
+    # file_path_neg = 'neg_headline_pairs.tsv'
     lines = read_lines(file_path_pos)   # positive lines
-    neg_lines = read_lines(file_path_neg)   # positive lines
+    # neg_lines = read_lines(file_path_neg)   # positive lines
 
-    data = InputData(lines, neg_lines)
+    data = InputData(lines)
     data.sentence_id_mappings()
 
     # Initilaly get Eucledian embeddings using this model. We will later transform these sentence embeddings into hyperbolic space
     model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
     data.get_sentence_embeddings(model)
+
+    data.draw_trees()   # optional
 
     output_size = 50
 
@@ -258,96 +327,10 @@ def main():
     print("New embeddings = ",new_embeddings)
 
 
-
 if __name__=="__main__": 
     main() 
 
 
-# Code from learning_utils.py
-# EPS = 1e-15 # for numerical stability
-# PROJ_EPS = 1e-5
-# MAX_TANH_ARG = 15.0
-
-# Dot prod
-# def torch_dot(x, y):
-#     return torch.sum(x * y, dim=1, keepdim=True)
-
-# # L2 norm
-# def torch_norm(x):
-#     return torch.norm(x, dim=1, keepdim=True)
-
-# # Inverse hyperbolic tangent applied element-wise to a tensor
-# def t_arctanh(v):
-#     return 0.5*torch.log((1+v)/(1-v))
-
-# # Inverse hyperbolic tangent with clipping
-# def torch_atanh(x):
-#     return t_arctanh(torch.min(x, torch.tensor(1. - EPS)))  # just clips values and passes to arctanh which does the actual log(1+v/1-v)
-
-# # Hyperbolic tangent with clipping
-# def torch_tanh(x):
-#     return torch.tanh(torch.min(torch.max(x, torch.tensor(-MAX_TANH_ARG)), torch.tensor(MAX_TANH_ARG)))
-
-# # its fully commented out??
-# def torch_project_hyp_vec(v, c=1):
-#     """Projects the hyperbolic vectors to the inside of the ball."""
-#     # clip_norm = torch.tensor(1-PROJ_EPS)
-#     # clipped_v = F.normalize(v, p=2, dim=1)*clip_norm
-#     # return clipped_v
-#     return v
-
-# def torch_hyp_add(u, v, c=1):
-#     """Accepts torch tensors u, v and returns their sum in hyperbolic
-#     space in tensor format. Radius of the open ball is 1/sqrt(c). """
-#     v = v+torch.tensor(EPS)
-#     torch_dot_u_v = 2 * torch_dot(u, v)
-#     torch_norm_u_sq = torch_dot(u,u)
-#     torch_norm_v_sq = torch_dot(v,v)
-#     denominator = 1. + torch_dot_u_v + torch_norm_v_sq * torch_norm_u_sq
-#     result = (1. + torch_dot_u_v + torch_norm_v_sq) / denominator * u + (1. - torch_norm_u_sq) / denominator * v
-#     return torch_project_hyp_vec(result)
-
-# def torch_mv_mul_hyp(M, x, c=1):
-#     x = x + torch.tensor(EPS)
-#     Mx = torch.matmul(x, M)+torch.tensor(EPS)
-#     MX_norm = torch_norm(Mx)
-#     x_norm = torch_norm(x)
-#     result = torch_tanh(MX_norm / x_norm * torch_atanh(x_norm)) / MX_norm * Mx
-#     return torch_project_hyp_vec(result, c)
-
-# #Hyperbolic modules.
-
-# class HypLinear(nn.Module):
-#     """Applies a hyperbolic "linear" transformation to the incoming data: :math:`y = xA^T + b`
-#        Uses hyperbolic formulation of addition, scaling and matrix multiplication.
-#     """
-
-#     def __init__(self, in_features, out_features, bias=True):
-#         super(HypLinear, self).__init__()
-#         self.in_features = in_features
-#         self.out_features = out_features
-#         self.weight = nn.Parameter(torch.FloatTensor(out_features, in_features))
-
-#         if bias:
-#             self.bias = nn.Parameter(torch.FloatTensor(1, out_features))
-#         else:
-#             self.register_parameter('bias', None)
-#         self.reset_parameters()
-
-#     def reset_parameters(self):
-#         stdv = 1. / math.sqrt(self.weight.size(1))
-#         self.weight.data.uniform_(-stdv, stdv)
-#         if self.bias is not None:
-#             self.bias.data.uniform_(-stdv, stdv)
-
-#     def forward(self, input_):
-#         result = torch_hyp_add(torch_mv_mul_hyp(torch.transpose(self.weight,0,1), input_), self.bias) #(batch, input) x (input, output)
-#         return result
-
-#     def extra_repr(self):
-#         return 'in_features={}, out_features={}, bias={}'.format(
-#             self.in_features, self.out_features, self.bias is not None
-#         )
 
 
 
