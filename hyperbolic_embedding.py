@@ -216,7 +216,7 @@ class InputData:
             # print("trees = ", self.trees)
             print(f"euclidean_embeddings[0].shape={self.euclidean_embeddings[0].shape}")
 
-    def draw_trees(self, figname, sentence_embeddings = None):
+    def draw_trees(self, figname, sentence_embeddings = None, distance_metric=None):
         if sentence_embeddings is None:
             sentence_embeddings = self.eucledian_embeddings_all
         # Create a sample tree structure
@@ -229,8 +229,12 @@ class InputData:
         for parent, children in tree_structure.items():
             dot.node('"{}"'.format(self.unique_sentences_list[parent]))
             for child in children:
-                dot.edge('"{}"'.format(self.unique_sentences_list[parent]), '"{}"'.format(self.unique_sentences_list[child]), \
-                        label = str(cosine_similarity([sentence_embeddings[parent]], [sentence_embeddings[child]])))
+                if not distance_metric:
+                    dot.edge('"{}"'.format(self.unique_sentences_list[parent]), '"{}"'.format(self.unique_sentences_list[child]), \
+                            label = str(cosine_similarity([sentence_embeddings[parent]], [sentence_embeddings[child]])))
+                else:
+                    dot.edge('"{}"'.format(self.unique_sentences_list[parent]), '"{}"'.format(self.unique_sentences_list[child]), \
+                            label = str(distance_metric(sentence_embeddings[parent], sentence_embeddings[child])))
                 
         dot.render(figname, format='pdf', cleanup=True)
 
@@ -297,7 +301,7 @@ class EucToHypNN(nn.Module):
         # x = self.softmax_out(x)
         return x
 # another option is to directly finetune the sentence embeding model with hyperbolic loss functions
-    
+
 def main(): 
     global VERBOSE
     VERBOSE = True
@@ -316,7 +320,7 @@ def main():
 
     data.draw_trees(figname = "tree_cosine")   # optional
 
-    output_size = 50
+    output_size = 384
 
     converterModel = EucToHypNN(output_size)
     converterModel.to(device)
@@ -336,7 +340,7 @@ def main():
     
     # trainer.trainFCIters(data, mapping)
     train_losses = trainer.trainFCIters2(data, converterModel, n_epochs=85)
-
+    torch.save(converterModel.state_dict(), 'converterModel.pth')
     plot_losses(train_losses)
 
     # print("data.eucledian_embeddings_all = ", data.eucledian_embeddings_all)
@@ -347,8 +351,8 @@ def main():
     # print("new = ",new_embeddings[0])
 
     torch.save(new_embeddings, 'new_embeddings.pt')
-
-    data.draw_trees(figname = "tree_hyp_cosine", sentence_embeddings=new_embeddings.detach())   # optional
+    
+    data.draw_trees(figname = "tree_hyp_cosine", sentence_embeddings=new_embeddings.detach(), distance_metric = trainer.dist_h)   # optional
 
 
 
