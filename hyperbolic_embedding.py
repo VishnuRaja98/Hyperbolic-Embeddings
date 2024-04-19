@@ -34,7 +34,7 @@ def read_lines(path):
         reader = csv.reader(tsv_file, delimiter='\t')
         for row in reader:
             lines.append(row)
-    if VERBOSE: print(f"Total relations = {len(lines)}")
+    # if VERBOSE: print(f"Total relations = {len(lines)}")
     return lines
 
 def plot_losses(losses):
@@ -114,6 +114,18 @@ class InputData:
         self.euclidean_embeddings = []
         self.indices = []  # each connected_component index. Used in FcIters
     
+    def send_to_gpu(self):
+        if torch.cuda.is_available():
+            self.eucledian_embeddings_all = self.eucledian_embeddings_all.to(device)
+            self.unique_sentences_list = self.unique_sentences_list.to(device)
+            print("Variables sent to GPU.")
+        else:
+            print("GPU not available.")
+
+    def to_cpu(self):
+        self.eucledian_embeddings_all = self.eucledian_embeddings_all.cpu()
+        self.unique_sentences_list = self.unique_sentences_list.cpu()
+        print("Variables moved to CPU.")
 
     def sentence_id_mappings(self):
         """Initializes the mapping of sentence to ID and ID to sentence 
@@ -133,12 +145,18 @@ class InputData:
         self.unique_sentences_list = ["" for _ in range(len(self.sentence_ids))]
         for key, val in self.sentence_ids.items():
             self.unique_sentences_list[val]=key
-        if VERBOSE: print("unique_sentences_list length = ", len(self.unique_sentences_list))
+        # if VERBOSE: print("unique_sentences_list length = ", len(self.unique_sentences_list))
 
-    def get_sentence_embeddings(self, model):
+    def get_sentence_embeddings(self, model=None, pretrained_file = None):
         """Creates sentence embeddings and create final input matrix of embeddings of sentences of each tree
         Final main output = eucledian_embeddings = [[sentenceEmbedding1,..,sentenceEmbeddingN] for each distinct tree]"""
-        self.eucledian_embeddings_all = torch.tensor(model.encode(self.unique_sentences_list))
+        if pretrained_file: # these will load embeddings from pretrained embeddings. There are not eucleding right now
+            # VERBOSE = True
+            self.eucledian_embeddings_all = torch.load("xlmr-embeddings/new_embeddings.pt", map_location=torch.device('cpu'))
+        elif model:
+            self.eucledian_embeddings_all = torch.tensor(model.encode(self.unique_sentences_list))
+        else:
+            raise ValueError("Need to pass atleast one of model or pretrained file to InputData.get_sentence_embeddings()")
         if VERBOSE: 
             print("embeddings shape = ",self.eucledian_embeddings_all.shape)
             # print("First sentence tokenized = ",self.eucledian_embeddings_all[0])
@@ -156,8 +174,8 @@ class InputData:
         G_directed.add_edges_from(self.trees_list)
 
         # Add edges from every node to each of its reachable nodes
-        graph_with_edges = add_edges_to_reachable_nodes(G_directed)
-        
+        graph_with_edges = add_edges_to_reachable_nodes(G_directed) # this needs to also update trees_list as its whats being used in trainer.distance_hyperbolic
+        self.trees_list = list(graph_with_edges.edges())
         # this below for loop is only used for creating datastructure for the pdf
         for edge in graph_with_edges.edges(data=True):
             # using this directed graph for drawing as the directed one wasnt very clear.
@@ -234,7 +252,7 @@ class InputData:
                             label = str(cosine_similarity([sentence_embeddings[parent]], [sentence_embeddings[child]])))
                 else:
                     dot.edge('"{}"'.format(self.unique_sentences_list[parent]), '"{}"'.format(self.unique_sentences_list[child]), \
-                            label = str(distance_metric(sentence_embeddings[parent], sentence_embeddings[child])))
+                            label = str(distance_metric(sentence_embeddings[parent], sentence_embeddings[child]).item()))
                 
         dot.render(figname, format='pdf', cleanup=True)
 
@@ -278,9 +296,10 @@ class EucToHypNN_old(nn.Module):
         return x
     
 class EucToHypNN(nn.Module):
-    def __init__(self, output_size, freeze_l1=False):
+    def __init__(self, output_size, sentence_transformer, freeze_l1=False):
         super(EucToHypNN, self).__init__()
-        self.l1 = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+        # self.l1 = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+        self.l1 = sentence_transformer
 
         if freeze_l1:
             for param in self.l1.parameters():
@@ -292,7 +311,7 @@ class EucToHypNN(nn.Module):
         # self.softmax_out = nn.Softmax(dim=1)
 
     def forward(self, x):
-        x = torch.tensor(self.l1.encode(x))
+        x = torch.tensor(self.l1.encode(x)).to(device)
         # Normalize the embeddings -> didnt make a diff
         # x = torch.nn.functional.normalize(x, p=2, dim=-1)
         x = self.fc1(x)
@@ -314,15 +333,21 @@ def main():
     data = InputData(lines)
     data.sentence_id_mappings()
 
+    sentence_transformer_name = 'sentence-transformers/stsb-xlm-r-multilingual' # 'sentence-transformers/all-MiniLM-L6-v2'
     # Initilaly get Eucledian embeddings using this model. We will later transform these sentence embeddings into hyperbolic space
-    model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+    model = SentenceTransformer(sentence_transformer_name)
     data.get_sentence_embeddings(model)
 
     data.draw_trees(figname = "tree_cosine")   # optional
+    # data.draw_trees(figname = "tree_hyp_initial", distance_metric = trainer.dist_h)   # optional
 
-    output_size = 384
+    output_size = 768   # 384
 
-    converterModel = EucToHypNN(output_size)
+    if device == 'cuda':
+        data.send_to_gpu()
+
+    converterModel = EucToHypNN(output_size,model)
+    print("ConverterModel = ", converterModel)
     converterModel.to(device)
 
     """mapping = nn.Sequential(
@@ -339,8 +364,9 @@ def main():
     # print("total trees = ", len(trees ))
     
     # trainer.trainFCIters(data, mapping)
-    train_losses = trainer.trainFCIters2(data, converterModel, n_epochs=85)
-    torch.save(converterModel.state_dict(), 'converterModel.pth')
+    epochs = 100
+    train_losses = trainer.trainFCIters2(data, converterModel, n_epochs=epochs)
+    torch.save(converterModel.state_dict(), 'converterModel.pt')
     plot_losses(train_losses)
 
     # print("data.eucledian_embeddings_all = ", data.eucledian_embeddings_all)
@@ -352,7 +378,7 @@ def main():
 
     torch.save(new_embeddings, 'new_embeddings.pt')
     
-    data.draw_trees(figname = "tree_hyp_cosine", sentence_embeddings=new_embeddings.detach(), distance_metric = trainer.dist_h)   # optional
+    data.draw_trees(figname = "tree_hyp_final", sentence_embeddings=new_embeddings.detach(), distance_metric = trainer.dist_h)   # optional
 
 
 
