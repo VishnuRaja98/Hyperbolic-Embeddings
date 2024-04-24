@@ -234,7 +234,7 @@ class InputData:
             # print("trees = ", self.trees)
             print(f"euclidean_embeddings[0].shape={self.euclidean_embeddings[0].shape}")
 
-    def draw_trees(self, figname, sentence_embeddings = None, distance_metric=None):
+    def draw_trees(self, figname, sentence_embeddings = None, distance_metric=None, k=None):
         if sentence_embeddings is None:
             sentence_embeddings = self.eucledian_embeddings_all
         # Create a sample tree structure
@@ -251,8 +251,11 @@ class InputData:
                     dot.edge('"{}"'.format(self.unique_sentences_list[parent]), '"{}"'.format(self.unique_sentences_list[child]), \
                             label = str(cosine_similarity([sentence_embeddings[parent]], [sentence_embeddings[child]])))
                 else:
+                    # if distance metric is dist_h then parameer k is also required
+                    if not k:
+                        raise ValueError("Parameter k is required while drawing a tree with dist_h metric")
                     dot.edge('"{}"'.format(self.unique_sentences_list[parent]), '"{}"'.format(self.unique_sentences_list[child]), \
-                            label = str(distance_metric(sentence_embeddings[parent], sentence_embeddings[child]).item()))
+                            label = str(distance_metric(sentence_embeddings[parent], sentence_embeddings[child], k=k).item()))
                 
         dot.render(figname, format='pdf', cleanup=True)
 
@@ -346,9 +349,9 @@ def main():
     if device == 'cuda':
         data.send_to_gpu()
 
-    converterModel = EucToHypNN(output_size,model)
-    print("ConverterModel = ", converterModel)
-    converterModel.to(device)
+    # converterModel = EucToHypNN(output_size,model)
+    # print("ConverterModel = ", converterModel)
+    # converterModel.to(device)
 
     """mapping = nn.Sequential(
             nn.Linear(input_size, 384).to(device),
@@ -365,20 +368,26 @@ def main():
     
     # trainer.trainFCIters(data, mapping)
     epochs = 100
-    train_losses = trainer.trainFCIters2(data, converterModel, n_epochs=epochs)
-    torch.save(converterModel.state_dict(), 'converterModel.pt')
-    plot_losses(train_losses)
+    ks = [1, 2, 3, 4, 5, 10, 20, 50, 100]
+    for k in ks:
+        converterModel = EucToHypNN(output_size,model)
+        print(f"ConverterModel beginning for k = {k}")
+        converterModel.to(device)
 
-    # print("data.eucledian_embeddings_all = ", data.eucledian_embeddings_all)
-    # new_embeddings = mapping(torch.tensor(data.eucledian_embeddings_all))
-    new_embeddings = converterModel(data.unique_sentences_list)
+        train_losses = trainer.trainFCIters2(data, converterModel, n_epochs=epochs, k=k)
+        torch.save(converterModel.state_dict(), f'converterModel_k{k}.pt')
+        plot_losses(train_losses)
 
-    # print("old = ",data.eucledian_embeddings_all[0])
-    # print("new = ",new_embeddings[0])
+        # print("data.eucledian_embeddings_all = ", data.eucledian_embeddings_all)
+        # new_embeddings = mapping(torch.tensor(data.eucledian_embeddings_all))
+        new_embeddings = converterModel(data.unique_sentences_list)
 
-    torch.save(new_embeddings, 'new_embeddings.pt')
-    
-    data.draw_trees(figname = "tree_hyp_final", sentence_embeddings=new_embeddings.detach(), distance_metric = trainer.dist_h)   # optional
+        # print("old = ",data.eucledian_embeddings_all[0])
+        # print("new = ",new_embeddings[0])
+
+        torch.save(new_embeddings, f'new_embeddings_k{k}.pt')
+        
+        data.draw_trees(figname = f"tree_hyp_final_k{k}", sentence_embeddings=new_embeddings.detach(), distance_metric = trainer.dist_h, k=k)   # optional
 
 
 

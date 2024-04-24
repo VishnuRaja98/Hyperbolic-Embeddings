@@ -13,7 +13,7 @@ from torch.optim.optimizer import Optimizer, required
 spten_t = torch.sparse.FloatTensor
 
 
-def poincare_grad(p, d_p):
+def poincare_grad(p, d_p, k=1):
     """
     Calculates Riemannian grad from Euclidean grad.
     Args:
@@ -31,7 +31,7 @@ def poincare_grad(p, d_p):
         p_sqnorm = torch.sum(p.data ** 2, dim=-1, keepdim=True)
         d_p = d_p * ((1 - p_sqnorm) ** 2 / 4).expand_as(d_p)
 
-    return d_p
+    return d_p*(k**2)
 
 
 def euclidean_grad(p, d_p):
@@ -80,7 +80,7 @@ class RiemannianSGD(Optimizer):
         return loss
     
 class RiemannianAdam(Optimizer):
-    def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8, rgrad=required, retraction=required):
+    def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8, k=1, rgrad=required, retraction=required):
         
         if not 0.0 <= lr:   # Check validity of input parameters
             raise ValueError("Invalid learning rate: {}".format(lr))
@@ -91,7 +91,7 @@ class RiemannianAdam(Optimizer):
         if not 0.0 <= betas[1] < 1.0:
             raise ValueError("Invalid beta parameter at index 1: {}".format(betas[1]))
 
-        defaults = dict(lr=lr, betas=betas, eps=eps, rgrad=rgrad, retraction=retraction)    # Store default values for parameters
+        defaults = dict(lr=lr, betas=betas, eps=eps, k=k, rgrad=rgrad, retraction=retraction)    # Store default values for parameters
         super(RiemannianAdam, self).__init__(params, defaults)  # Call superclass constructor with parameters and defaults
 
     def step(self, closure=None):
@@ -103,7 +103,7 @@ class RiemannianAdam(Optimizer):
             for p in group['params']:   # Iterate over parameters in group
                 if p.grad is None:
                     continue
-                grad = group['rgrad'](p, p.grad.data)   # calculates Riemannian gradient - passed function is poincare gradient
+                grad = group['rgrad'](p, p.grad.data, group['k'])   # calculates Riemannian gradient - passed function is poincare gradient
                 state = self.state[p]       # optimizer state for parameter
                 if len(state) == 0:         # setting optimizer state as 0s if state does not exist
                     state['step'] = 0       # used for counting number of states for changing lr
@@ -120,7 +120,9 @@ class RiemannianAdam(Optimizer):
 
                 denom = exp_avg_sq.sqrt().add_(group['eps'])
 
+                # decay_factor = 0.9  # decay factor for reducing reduction in learning rate i.e. Decelerates the reduction in lr
                 step_size = group['lr'] * math.sqrt(1 - beta2 ** state['step']) / (1 - beta1 ** state['step'])
+                # step_size *= decay_factor ** state['step']  # Apply the decay factor to the learning rate
                 
                 p.data.addcdiv_(exp_avg, denom, value=-step_size)
 
@@ -131,18 +133,18 @@ class RiemannianAdam(Optimizer):
 def acosh(x):   # acosh = log(x+sqrt(x^2 - 1))
     return torch.log(x + torch.sqrt(x**2-1))
 
-def dist_h(u,v):
+def dist_h(u,v,k=1):
     z  = 2*torch.norm(u-v,2)**2 # formula at - https://en.wikipedia.org/wiki/Poincar%C3%A9_disk_model
     uu = 1. + torch.div(z,((1-torch.norm(u,2)**2)*(1-torch.norm(v,2)**2)))  # we can just just use torch.norm(u) instead of torch.norm(u,2) L2 is by default
     return acosh(uu)
 
-def distance_matrix_hyperbolic(input):
+def distance_matrix_hyperbolic(input, k=required):
     row_n = input.shape[0]
     dist_mat = torch.zeros(row_n, row_n, device=device) # dist_mat stores the hyperbolic (geodesic) distance between each pair of points
     for row in range(row_n):
         for i in range(row_n):
             if i != row:
-                dist_mat[row, i] = dist_h(input[row,:], input[i,:])
+                dist_mat[row, i] = dist_h(input[row,:], input[i,:], k=k)
     return dist_mat
 
 # test_input = torch.tensor([[1,1,1,1,1,1,1,1],[0,3,1,0,0,3,1,0],[1,0,0,1,1,0,0,1], [2,0,0,2,2,0,0,2]], dtype=torch.float32)
@@ -303,7 +305,7 @@ def trainFCHyp(input_matrix, ground_truth, n, mapping, mapping_optimizer, max_le
 
 #         print(f"Epoch {epoch+1}, Loss: {loss.item()}")
 
-def trainFCIters2(data, mapping, n_epochs=5, print_every=50, plot_every=100, learning_rate=1e-4):
+def trainFCIters2(data, mapping, n_epochs=5, print_every=50, plot_every=100, learning_rate=1e-4, k=required):
     start = time.time()
     plot_losses = []
     print_loss_total = 0
@@ -319,7 +321,7 @@ def trainFCIters2(data, mapping, n_epochs=5, print_every=50, plot_every=100, lea
         loss=0
         D=[]
         for i in range(len(training_pairs)):
-            dist_recovered = distance_matrix_hyperbolic(output[list(data.connected_components[i])])
+            dist_recovered = distance_matrix_hyperbolic(output[list(data.connected_components[i])], k=k)
             D.append(distortion(training_pairs[i][1], dist_recovered, training_pairs[i][2]))
         #loss=sum(D)/len(D)
         loss=sum(D)
