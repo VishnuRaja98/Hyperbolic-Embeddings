@@ -136,7 +136,7 @@ def acosh(x):   # acosh = log(x+sqrt(x^2 - 1))
 def dist_h(u,v,k=1):
     z  = 2*torch.norm(u-v,2)**2 # formula at - https://en.wikipedia.org/wiki/Poincar%C3%A9_disk_model
     uu = 1. + torch.div(z,((1-torch.norm(u,2)**2)*(1-torch.norm(v,2)**2)))  # we can just just use torch.norm(u) instead of torch.norm(u,2) L2 is by default
-    return acosh(uu)
+    return acosh(uu)/k
 
 def distance_matrix_hyperbolic(input, k=required):
     row_n = input.shape[0]
@@ -178,6 +178,19 @@ def distortion(H1, H2, n, jobs=16):
     return avg
 # Does Euclidean to hyperbolic mapping using series of FC layers.
 # We use ground truth distance matrix for the pair since the distortion for hyperbolic embs are really low.
+def distortion_new(H1, H2, n, jobs=16):   
+    dists = []
+    for i in range(n):
+        for j in range(n):           
+            if H1[i, j] == 1:
+                dist = distortion_row(H1[i, :], H2[i, :], n, i)
+                dists.append(dist)    
+                # break  # Exit the inner loop once 1 is found
+    to_stack = [tup[0] for tup in dists]   
+    avg = torch.stack(to_stack).sum()/len(to_stack)  
+    d = 1 / (1 + torch.exp(-avg))
+    return d
+
 def asMinutes(s):
     m = math.floor(s / 60)
     s -= m * 60
@@ -322,7 +335,7 @@ def trainFCIters2(data, mapping, n_epochs=5, print_every=50, plot_every=100, lea
         D=[]
         for i in range(len(training_pairs)):
             dist_recovered = distance_matrix_hyperbolic(output[list(data.connected_components[i])], k=k)
-            D.append(distortion(training_pairs[i][1], dist_recovered, training_pairs[i][2]))
+            D.append(distortion_new(training_pairs[i][1], dist_recovered, training_pairs[i][2]))
         #loss=sum(D)/len(D)
         loss=sum(D)
         

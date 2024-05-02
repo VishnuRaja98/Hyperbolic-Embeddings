@@ -18,6 +18,9 @@ import matplotlib.pyplot as plt
 
 #BEGIN imports ive added
 import csv
+import os
+import sys
+import argparse
 # from transformers import AutoTokenizer, AutoModel
 from sentence_transformers import SentenceTransformer
 from graphviz import Digraph
@@ -309,7 +312,7 @@ class EucToHypNN(nn.Module):
                 param.requires_grad = False
 
         self.fc1 = nn.Linear(self.l1.get_sentence_embedding_dimension(), 2*self.l1.get_sentence_embedding_dimension())
-        self.relu = nn.ReLU()
+        self.relu = nn.SiLU()
         self.fc2 = nn.Linear(2*self.l1.get_sentence_embedding_dimension(), output_size)
         # self.softmax_out = nn.Softmax(dim=1)
 
@@ -324,9 +327,14 @@ class EucToHypNN(nn.Module):
         return x
 # another option is to directly finetune the sentence embeding model with hyperbolic loss functions
 
-def main(): 
+def main(args): 
     global VERBOSE
     VERBOSE = True
+
+    pretrained_parameters_folder_path = args.folder     # if you want to use already trained parametes
+    k_values = args.k                                    # if k is specified in sysargs use it
+    epochs = args.epochs                                    # if epochs is specified in sysargs use it
+    use_pretrained = True if args.use_pretrained==1 else False       # Decides whether to use pretrained parameters
 
     file_path_pos = 'pos_headline_pairs.tsv'
     # file_path_neg = 'neg_headline_pairs.tsv'
@@ -367,11 +375,24 @@ def main():
     # print("total trees = ", len(trees ))
     
     # trainer.trainFCIters(data, mapping)
-    epochs = 100
-    ks = [1, 2, 3, 4, 5, 10, 20, 50, 100]
+    if not epochs: 
+        epochs = 50
+    if not k_values: 
+        ks = [1, 5, 10, 50, 100]
+    else:
+        ks = k_values
     for k in ks:
         converterModel = EucToHypNN(output_size,model)
         print(f"ConverterModel beginning for k = {k}")
+        # Loading parameters from pretrained_parameters_folder_path if its present
+        if use_pretrained:
+            model_file = os.path.join(pretrained_parameters_folder_path, f"converterModel_k{k}.pt")
+            if os.path.exists(model_file):
+                converterModel.load_state_dict(torch.load(model_file))
+                print("Model loaded from:", model_file)
+            else:
+                print("Pretrained model was not found. Starting with default parameters only.")
+
         converterModel.to(device)
 
         train_losses = trainer.trainFCIters2(data, converterModel, n_epochs=epochs, k=k)
@@ -392,7 +413,13 @@ def main():
 
 
 if __name__=="__main__": 
-    main() 
+    parser = argparse.ArgumentParser(description="Load a PyTorch model from a .pt file")
+    parser.add_argument("folder", type=str, nargs='?', default="xlmr-embeddings", help="Path to the folder containing the model file (optional)")
+    parser.add_argument("-p","--use_pretrained", type=int, default=0, help="pass as 1 is you want to check for pretrainedd parameters")
+    parser.add_argument("-k", "--k", type=int, nargs='*', default=None, help="Value of k (default: None)")
+    parser.add_argument("-e", "--epochs", type=int, default=50, help="No of epochs (default: 50)")
+    args = parser.parse_args()
+    main(args) 
 
 
 
