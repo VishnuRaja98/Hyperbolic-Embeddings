@@ -1,7 +1,7 @@
 import csv
 from openai import OpenAI
 import networkx as nx
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 from tqdm import tqdm
 import os
 import re
@@ -31,9 +31,9 @@ def generate_paraphrase(sentence):
     ]
     
     response = client.chat.completions.create(
-        model="llama-3.1-8b-instruct",
+        model="sonar",
         messages=messages,
-        max_tokens=1000,
+        max_tokens=120,
         temperature=0.7
     )
     
@@ -64,7 +64,7 @@ def read_tab_separated_file(file_path):
     return data
 
 # Example usage
-file_path_train = 'MSRParaphraseCorpus/msr_paraphrase_train.txt'
+file_path_train = 'MSRParaphraseCorpus/msr_paraphrase_test.txt'
 parsed_data_train = read_tab_separated_file(file_path_train)
 
 # Print the first few rows to verify
@@ -73,7 +73,7 @@ new_paraphrase_db = []
 # G = nx.Graph()  # Create an undirected graph    #GRAPH
 # sent_id = {}    # USed only for plotting the graph   #GRAPH
 # cur_id=0    # USed only for plotting the graph   #GRAPH
-for row in tqdm(parsed_data_train[500:1000], desc="Generating Paraphrases"):
+for row in tqdm(parsed_data_train[2:30], desc="Generating Paraphrases"):
     current_sentences = [row["string1"], row["string2"]]
     # if row["string1"] not in sent_id:    #GRAPH
     #     sent_id[row["string1"]] = cur_id    #GRAPH
@@ -100,7 +100,7 @@ for row in tqdm(parsed_data_train[500:1000], desc="Generating Paraphrases"):
         #     sent_id[paraphrase] = cur_id
         #     cur_id+=1
         # G.add_edge(sent_id[sentence], sent_id[paraphrase]) #GRAPH
-out_file_name = 'output2.txt'
+out_file_name = 'output2_2.txt'
 # Visualize the graph
 # plt.figure(figsize=(12, 8)) #GRAPH
 # pos = nx.spring_layout(G)  # Use spring layout for better visualization #GRAPH
